@@ -44,4 +44,6 @@ public class MemberController {
         memberService.deleteMemberByMemberId(memberId);
         return BaseResponse.ok(HttpStatus.OK,"회원ID로 삭제 성공");
     }
+
+    //배포가 되는지???
 }

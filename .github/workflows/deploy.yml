@@ -1,0 +1,88 @@
+name: 'JaTanpung CiCD'
+
+#어떤 이벤트가 발생할때 워크플로우를 실행할지 정의하는 부분.
+on:
+  push:
+    branches: [ "cyj" ]
+#  pull_request:
+#    types:
+#      - closed
+#    branches: [ "main" ]
+
+#workflow에서 작동하는 동작들은 jobs에 의해 정의됨
+jobs:
+  #build와 deploy는 job의 이름
+  build: #build라는 작업아래의 전부가 성공해야 build라는 작업이 성공하는 것. (deploy와 무관 -> job단위로 성공여부 결정)
+    runs-on: ubuntu-latest #git action이 실행 될 환경(우분투 최신환경)
+    name: build
+    steps: #action들을 정의해 놓음
+      # 코드 저장소로 부터 CI 서버로 코드 pull
+      - name: checkout #action의 이름
+        uses: actions/checkout@v3 #github에 이미 등록된 액션이 있는데 그 액션을 가리킴. (라이브러리)
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3 #깃헙액션에서 스프링프로젝트를 빌드하기 위해 jdk를 셋팅해줌
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # gradle 빌드 실행을 위한 권한을 부여
+      - name: grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: gradle build #받은 권한을 가지고 gradle실행
+        run: ./gradlew clean build #build파일이 만들어짐
+
+      #만들어진 build파일을 docker hub에 올리기 위함
+      # private 저장소일경우 로그인 필요
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      #도커로 말아줌
+      - name: build docker
+        run: ./gradlew bootBuildImage --imageName=${{ secrets.DOCKER_REPO }}
+      #도커 허브에 올려줌
+      - name: Docker push
+        run: |
+          docker tag ${{secrets.DOCKER_REPO}}:latest ${{secrets.DOCKERHUB_USERNAME}}/${{secrets.DOCKER_REPO}}:latest
+          docker push ${{secrets.DOCKERHUB_USERNAME}}/${{secrets.DOCKER_REPO}}
+#CI작업 끝
+
+#CD작업 시작
+  deploy:
+    name: CD PipeLine
+    runs-on: ubuntu-latest
+    needs: build #build이후에 수행하라는 명령어. (build이전에 배포되는것 방지)
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS credentials #aws배포를 위한 aws로그인
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Generate deployment directory #elastic beanstalk에서 docker파일을 명시하기 위해서
+        run: |
+          mkdir -p deploy
+          cp Dockerrun.aws.json deploy/Dockerrun.aws.json 
+          cd deploy && zip -r deploy.zip .
+        #Dockerrum.aws.json이라는 파일을 만들어서 필요한 정보를 작성해주어야한다.
+
+      - name: Beanstalk Deploy #elastic beanstalk에서 배포하는 명령어
+        uses: einaregilsson/beanstalk-deploy@v14
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          region: ${{ secrets.AWS_REGION }}
+          environment_name: ${{ secrets.AWS_EB_ENV_NAME }}
+          application_name: ${{ secrets.AWS_EB_APP_NAME }}
+          version_label: jatanpung-cicd-${{steps.current-time.outputs.formattedTime}} #자동 배포할 때 구분자가 없으면 에러가 나서 구분자 역할.
+          deployment_package: deploy/deploy.zip
+          wait_for_environment_recovery: 200
+
