@@ -26,6 +26,15 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Set project from github secret
+        uses: microsoft/variable-substitution@v1
+        with:
+          files: ./src/main/resources/application.yml
+        env:
+          spring.datasource.url: ${{ secrets.DATASOURCE_URL }}
+          spring.datasource.username: ${{ secrets.DATASOURCE_USERNAME }}
+          spring.datasource.password: ${{ secrets.DATASOURCE_PASSWORD }}
+
       # gradle 빌드 실행을 위한 권한을 부여
       - name: grant execute permission for gradlew
         run: chmod +x gradlew
